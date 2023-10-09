@@ -1,0 +1,17 @@
+[package]
+name = "sqlite-es"
+version = "0.1.0"
+edition = "2021"
+authors = ["Bèr Kessels <ber@berk.es>"]
+licence = "MIT"
+keywords = ["cqrs", "event-sourcing", "sqlite"]
+description = "A SQLite implementation of an event repository for cqrs-es."
+repository = "https://github.com/berkes/sqlite-es"
+documentation = "https://docs.rs/sqlite-es"
+readme = "README.md"
+
+
+[dependencies]
+cqrs-es = "0.4.10"
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1", features = ["rt"] }
