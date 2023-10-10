@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                aggregate_type,\n                aggregate_id,\n                sequence,\n                event_type,\n                event_version,\n                payload,\n                metadata\n            FROM\n              events\n            WHERE\n              aggregate_type = $1 AND aggregate_id = $2 AND sequence > $3\n            ORDER BY sequence",
+  "describe": {
+    "columns": [
+      {
+        "name": "aggregate_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "aggregate_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence",
+        "ordinal": 2,
+        "type_info": "Int64"
+      },
+      {
+        "name": "event_type",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "event_version",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "payload",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata",
+        "ordinal": 6,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7358fd34937dbd16a6d3ca55186ac453672294dce75123e07f3cb79d55cdce69"
+}
