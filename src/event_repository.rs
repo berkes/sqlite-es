@@ -1,5 +1,4 @@
 /// Implements the `EventRepository` trait for a SQLite database.
-
 use async_trait::async_trait;
 use cqrs_es::{
     persist::{
@@ -126,7 +125,37 @@ impl PersistedEventRepository for SqliteEventRepository {
         &self,
         aggregate_id: &str,
     ) -> Result<Option<SerializedSnapshot>, PersistenceError> {
-        todo!()
+        let aggregate_type = A::aggregate_type();
+        let row = sqlx::query!(
+            r#"
+            SELECT
+                aggregate_type,
+                aggregate_id,
+                last_sequence,
+                current_snapshot,
+                payload
+            FROM
+                snapshots
+            WHERE
+                aggregate_type = $1 AND
+                aggregate_id = $2
+            "#,
+            aggregate_type,
+            aggregate_id
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(SqliteAggregateError::from)?;
+
+        match row {
+            Some(row) => Ok(Some(SerializedSnapshot {
+                aggregate_id: row.aggregate_id,
+                aggregate: serde_json::from_str(&row.payload).unwrap(),
+                current_sequence: row.last_sequence as usize,
+                current_snapshot: row.current_snapshot as usize,
+            })),
+            None => Ok(None),
+        }
     }
 
     async fn persist<A: Aggregate>(
@@ -137,16 +166,15 @@ impl PersistedEventRepository for SqliteEventRepository {
         let mut tx: Transaction<'_, Sqlite> = sqlx::Acquire::begin(&self.pool)
             .await
             .map_err(SqliteAggregateError::from)?;
-        let res = match snapshot_update {
-            None => {
-                for event in events {
-                    let event_version = event.event_version.clone();
-                    let event_sequence = event.sequence as i64;
-                    let event_payload = event.payload.clone().to_string();
-                    let event_metadata = event.metadata.to_string().clone();
 
-                    sqlx::query!(
-                        r#"
+        for event in events {
+            let event_version = event.event_version.clone();
+            let event_sequence = event.sequence as i64;
+            let event_payload = event.payload.clone().to_string();
+            let event_metadata = event.metadata.to_string().clone();
+
+            sqlx::query!(
+                r#"
                         INSERT INTO events (
                             aggregate_type,
                             aggregate_id,
@@ -158,27 +186,58 @@ impl PersistedEventRepository for SqliteEventRepository {
                         )
                         VALUES ($1, $2, $3, $4, $5, $6, $7)
                         "#,
-                        event.aggregate_type,
-                        event.aggregate_id,
-                        event_sequence,
-                        event.event_type,
-                        event_version,
-                        event_payload,
-                        event_metadata,
+                event.aggregate_type,
+                event.aggregate_id,
+                event_sequence,
+                event.event_type,
+                event_version,
+                event_payload,
+                event_metadata,
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(SqliteAggregateError::from)?;
+        }
+
+        if let Some((aggregate_id, aggregate, current_snapshot_version)) = snapshot_update {
+            // insert new snapshot
+            let current_sequence: i64 = events
+                .iter()
+                .map(|e| e.sequence)
+                .max()
+                .unwrap()
+                .try_into()
+                .unwrap();
+            let aggregate_type: String = A::aggregate_type().to_string();
+            let current_snapshot_version: i64 = current_snapshot_version.try_into().unwrap();
+            let payload = serde_json::to_string(&aggregate).unwrap();
+            // TODO: postgres-es differentiates between insert and update: when the current
+            // snapshot version is 1, it's an insert, otherwise it's an update
+            sqlx::query!(
+                r#"
+                    INSERT INTO snapshots (
+                        aggregate_type,
+                        aggregate_id,
+                        last_sequence,
+                        current_snapshot,
+                        payload
                     )
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(SqliteAggregateError::from)?;
-                }
-                Ok(())
-            }
-            Some(_) => {
-                todo!()
-            }
-        };
+                    VALUES ($1, $2, $3, $4, $5)
+                    "#,
+                aggregate_type,
+                aggregate_id,
+                current_sequence,
+                current_snapshot_version,
+                payload,
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(SqliteAggregateError::from)?;
+        }
+
         tx.commit().await.map_err(SqliteAggregateError::from)?;
 
-        res
+        Ok(())
     }
 
     async fn stream_events<A: Aggregate>(
@@ -220,7 +279,9 @@ impl PersistedEventRepository for SqliteEventRepository {
                     sequence: row.sequence as usize,
                     event_type: row.event_type,
                 });
-                feed.push(event).await.expect("Failed to push event to stream");
+                feed.push(event)
+                    .await
+                    .expect("Failed to push event to stream");
             }
         });
         Ok(stream)
@@ -259,7 +320,9 @@ impl PersistedEventRepository for SqliteEventRepository {
                     sequence: row.sequence as usize,
                     event_type: row.event_type,
                 });
-                feed.push(event).await.expect("Failed to push event to stream");
+                feed.push(event)
+                    .await
+                    .expect("Failed to push event to stream");
             }
         });
         Ok(stream)
@@ -372,15 +435,16 @@ mod test {
                 ],
                 None,
             )
-            .await.expect("Failed to persist events");
-        
+            .await
+            .expect("Failed to persist events");
+
         let mut stream = event_repo
             .stream_events::<TestAggregate>(&id)
             .await
             .unwrap();
 
         let mut found_in_stream = 0;
-        while let Some(_) = stream.next::<TestAggregate>().await {
+        while (stream.next::<TestAggregate>().await).is_some() {
             found_in_stream += 1;
         }
         assert_eq!(found_in_stream, 2);
@@ -413,20 +477,21 @@ mod test {
                 ],
                 None,
             )
-            .await.expect("Failed to persist events");
+            .await
+            .expect("Failed to persist events");
         let mut stream = event_repo
             .stream_all_events::<TestAggregate>()
             .await
             .unwrap();
         let mut found_in_stream = 0;
-        while let Some(_) = stream.next::<TestAggregate>().await {
+        while (stream.next::<TestAggregate>().await).is_some() {
             found_in_stream += 1;
         }
         assert_eq!(found_in_stream, 3);
     }
 
     #[tokio::test]
-    async fn snapshot_repositories_default_none() {
+    async fn test_snapshot_repositories_wo_events() {
         let id = uuid::Uuid::new_v4().to_string();
         let event_repo: SqliteEventRepository =
             SqliteEventRepository::new(default_sqlite_pool(TEST_CONNECTION_STRING).await);
@@ -435,12 +500,38 @@ mod test {
     }
 
     #[tokio::test]
-    async fn snapshot_repositories_aggregate_state() {
+    async fn test_snapshot_repositories_w_events() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let event_repo: SqliteEventRepository =
+            SqliteEventRepository::new(default_sqlite_pool(TEST_CONNECTION_STRING).await);
+        event_repo
+            .persist::<TestAggregate>(
+                &[test_event_envelope(
+                    &id,
+                    1,
+                    TestEvent::ChangeDescription("this should persist".to_string()),
+                )],
+                None,
+            )
+            .await
+            .unwrap();
+        let snapshot = event_repo.get_snapshot::<TestAggregate>(&id).await.unwrap();
+        assert_eq!(None, snapshot);
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_repositories_aggregate_state() {
         let id = uuid::Uuid::new_v4().to_string();
         let event_repo: SqliteEventRepository =
             SqliteEventRepository::new(default_sqlite_pool(TEST_CONNECTION_STRING).await);
 
         let test_description = "some test snapshot here".to_string();
+
+        let aggregate: Value = serde_json::to_value(TestAggregate {
+            id: id.clone(),
+            description: test_description.clone(),
+        })
+        .expect("Failed to serialize test aggregate");
 
         event_repo
             .persist::<TestAggregate>(
@@ -452,7 +543,7 @@ mod test {
                         TestEvent::ChangeDescription(test_description.clone()),
                     ),
                 ],
-                None,
+                Some((id.clone(), aggregate, 1)),
             )
             .await
             .unwrap();
@@ -461,7 +552,7 @@ mod test {
         assert_eq!(
             Some(snapshot_context(
                 id.clone(),
-                0,
+                2,
                 1,
                 serde_json::to_value(TestAggregate {
                     id: id.clone(),
@@ -474,7 +565,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn snapshot_repositories_sequence_iterated() {
+    async fn test_snapshot_repositories_sequence_iterated() {
         let id = uuid::Uuid::new_v4().to_string();
         let event_repo: SqliteEventRepository =
             SqliteEventRepository::new(default_sqlite_pool(TEST_CONNECTION_STRING).await);
@@ -497,7 +588,7 @@ mod test {
                         ),
                     ),
                 ],
-                Some((id.clone(), test_aggregate, 3)),
+                Some((id.clone(), test_aggregate, 1)),
             )
             .await
             .unwrap();
@@ -506,11 +597,13 @@ mod test {
         assert_eq!(
             Some(snapshot_context(
                 id.clone(),
-                0,
                 2,
+                1,
                 serde_json::to_value(TestAggregate {
                     id: id.clone(),
-                    description: "a test description that should be saved".to_string(),
+                    description: "an old test description".to_string(),
+                    // description should not be updated. This is weird and unexpected, but
+                    // also how postgres-es does it.
                 })
                 .unwrap()
             )),
@@ -519,7 +612,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn snapshot_repositories_sequence_not_iterated() {
+    async fn test_snapshot_repositories_sequence_not_iterated() {
         let id = uuid::Uuid::new_v4().to_string();
         let event_repo: SqliteEventRepository =
             SqliteEventRepository::new(default_sqlite_pool(TEST_CONNECTION_STRING).await);
@@ -535,9 +628,24 @@ mod test {
                             "a test description that should not be saved".to_string(),
                         ),
                     ),
+                    test_event_envelope(
+                        &id,
+                        2,
+                        TestEvent::ChangeDescription(
+                            "a test description that should also not be saved".to_string(),
+                        ),
+                    ),
                     test_event_envelope(&id, 1, TestEvent::Created(Created { id: id.clone() })),
                 ],
-                None,
+                Some((
+                    id.clone(),
+                    serde_json::to_value(TestAggregate {
+                        id: id.clone(),
+                        description: "an old test description".to_string(),
+                    })
+                    .unwrap(),
+                    1,
+                )),
             )
             .await
             .unwrap_err();
@@ -548,19 +656,7 @@ mod test {
         };
 
         let snapshot = event_repo.get_snapshot::<TestAggregate>(&id).await.unwrap();
-        assert_eq!(
-            Some(snapshot_context(
-                id.clone(),
-                0,
-                2,
-                serde_json::to_value(TestAggregate {
-                    id: id.clone(),
-                    description: "a test description that should be saved".to_string(),
-                })
-                .unwrap()
-            )),
-            snapshot
-        );
+        assert_eq!(None, snapshot);
     }
 
     async fn default_sqlite_pool(test_connection_string: &str) -> Pool<Sqlite> {
@@ -576,8 +672,7 @@ mod test {
         pool
     }
 
-    async fn verify_replay_stream(id: &str, event_repo: SqliteEventRepository) {
-    }
+    async fn verify_replay_stream(_id: &str, _event_repo: SqliteEventRepository) {}
 
     pub(crate) fn test_event_envelope(
         id: &str,

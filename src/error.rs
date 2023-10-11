@@ -4,7 +4,6 @@ use cqrs_es::persist::PersistenceError;
 use cqrs_es::AggregateError;
 use sqlx::Error;
 
-
 #[derive(Debug)]
 pub enum SqliteAggregateError {
     OptimisticLock,
@@ -29,7 +28,8 @@ impl From<sqlx::Error> for SqliteAggregateError {
         match &err {
             Error::Database(database_error) => {
                 if let Some(code) = database_error.code() {
-                    if code.as_ref() == "1555" { // UNIQUE constraint failed
+                    if code.as_ref() == "1555" {
+                        // UNIQUE constraint failed
                         return SqliteAggregateError::OptimisticLock;
                     }
                 }

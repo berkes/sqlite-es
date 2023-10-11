@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                    INSERT INTO snapshots (\n                        aggregate_type,\n                        aggregate_id,\n                        last_sequence,\n                        current_snapshot,\n                        payload\n                    )\n                    VALUES ($1, $2, $3, $4, $5)\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "3e28c1f1bfe80e223f4389c62930d12e76bece78b116e784aa7f5cccbe548823"
+}

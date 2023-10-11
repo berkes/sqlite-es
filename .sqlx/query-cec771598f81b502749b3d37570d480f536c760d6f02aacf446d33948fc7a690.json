@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                aggregate_type,\n                aggregate_id,\n                last_sequence,\n                current_snapshot,\n                payload\n            FROM\n                snapshots\n            WHERE\n                aggregate_type = $1 AND\n                aggregate_id = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "aggregate_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "aggregate_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_sequence",
+        "ordinal": 2,
+        "type_info": "Int64"
+      },
+      {
+        "name": "current_snapshot",
+        "ordinal": 3,
+        "type_info": "Int64"
+      },
+      {
+        "name": "payload",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "cec771598f81b502749b3d37570d480f536c760d6f02aacf446d33948fc7a690"
+}
